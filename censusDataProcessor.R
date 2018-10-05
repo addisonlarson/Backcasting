@@ -6,7 +6,7 @@ library(tidycensus); library(tidyverse)
 # https://api.census.gov/data/2016/acs/acs5/subject/variables.html
 # https://api.census.gov/data/2016/acs/acs5/profile/variables.html
 # Unfortunately this only works for 2011-2015 and 2012-2016 ACS.
-# I suspect API changes are the issue. May as well only use 2016 then
+# I suspect API changes are the issue.
 
 collect <- get_acs(geography = "tract",
                    state = c(34,42),
@@ -19,7 +19,7 @@ collect <- get_acs(geography = "tract",
                      disabUniverse = "S1810_C01_001E",
                      disabEst = "S1810_C02_001E",
                      lepUniverse = "S1601_C01_001E",
-                     lepPerc = "S1601_C05_001E"
+                     lepEst = "S1601_C05_001E"
                    ))
 collect2 <- get_acs(geography = "tract",
                     state = c(34,42),
@@ -61,8 +61,8 @@ divisor <- function(i,j) i / j * 100
 res <- as.data.frame(mapply(divisor,
                             collect[seq(4, 18, by = 2)],
                             collect[seq(3, 17, by = 2)]))
-colnames(res) <- gsub("Est", "Perc", colnames(res))
-res$GEOID <- collect$GEOID; res$year <- 2016
+colnames(res) <- gsub("Est", "", colnames(res))
+res$GEOID <- collect$GEOID
 
 # Next: Get older data from NHGIS.
 # Check out whether you can use 2010 Census API
@@ -178,15 +178,112 @@ collect2$olderUniverse <- collect2$femUniverse
 # Disabled
 # Just checked, and Table DP02 was the only table with this var.
 # Was (X) even for nationwide estimates.
+# May be able to use 2010 decennial for this, though
 
 # Rearrange columns to desired spots
 collect2 <- collect2[c(1:3, 20, 4, 5, 21, 6:10, 13, 22, 24, 23, 16:18)]
 res2 <- as.data.frame(mapply(divisor,
                              collect2[seq(4, 16, by = 2)],
                              collect2[seq(3, 15, by = 2)]))
-colnames(res2) <- gsub("Est", "Perc", colnames(res2))
-res2$GEOID <- collect2$GEOID; res2$year <- 2010
+colnames(res2) <- gsub("Est", "", colnames(res2))
+res2$GEOID <- collect2$GEOID
+
+# Evaluate pairwise changes by variable?
+# Rookie move: can't do this without MOEs
+
+# 2000 data
+# Note that you're downloading from the 2000 Summary File and doing nominal join
+# This does NOT account for changes in tract boundaries over time
+setwd("D:/alarson/SuburbanizationPoverty/CensusData")
+dem1 <- read.csv("nhgis0004_ds146_2000_tract.csv")
+dem2 <- read.csv("nhgis0004_ds151_2000_tract.csv")
+dem2 <- dem2[c(1, 32:62)]
+dem <- merge(dem1, dem2, by = "GISJOIN")
+rm(dem1); rm(dem2)
+# Filter for DVRPC region
+dem$stcty <- paste(dem$STATEA, dem$COUNTYA, sep = "_")
+dem <- subset(dem, stcty %in% c("34_5", "34_7", "34_15",
+                                  "34_21", "42_17", "42_29",
+                                  "42_45", "42_91", "42_101"))
+dem <- dem[c(1:2, 6, 8, 11, 30:110)]
+# Below 200% FPL
+dem$povUniverse <- rowSums(dem[,77:85])
+dem$povEst <- rowSums(dem[,77:84])
+dem[c(77:85)] <- NULL
+# Female
+dem$femUniverse <- rowSums(dem[,9:54])
+dem$femEst <- rowSums(dem[,32:54])
+# Under 18
+dem$youthUniverse <- dem$femUniverse
+dem$youthEst <- rowSums(dem[,9:12,32:35])
+# Over 65
+dem$olderUniverse <- dem$femUniverse
+dem$olderEst <- rowSums(dem[,26:31,49:54])
+dem[c(9:54)] <- NULL
+# Disabled
+dem$disabUniverse <- dem$femUniverse # May need to find noninstitutionalized pop for universe here
+dem$disabEst <- rowSums(dem[,11:30])
+dem[c(11:30)] <- NULL
+# Ethnic Minority
+dem$ethUniverse <- dem$FMC001 + dem$FMC002
+dem$ethEst <- dem$FMC001
+dem[c(7, 8)] <- NULL
+# Foreign Born
+dem$fornUniverse <- dem$GI8001 + dem$GI8002
+dem$fornEst <- dem$GI8002
+dem[c(7, 8)] <- NULL
+
+# Percentages
+res3 <- as.data.frame(mapply(divisor,
+                             dem[seq(9, 21, by = 2)],
+                             dem[seq(8, 20, by = 2)]))
+colnames(res3) <- gsub("Est", "", colnames(res3))
+# BEFORE THIS: MUST MAKE GEOID OUT OF ST CTY TRCT FIPS CODES
+res3$GEOID <- dem$GEOID 
 
 # Merge datasets
-res$disabPerc <- NULL
-fullRes <- rbind(res, res2)
+res3$lep <- NA
+dat2000 <- reshape(res3,
+                   idvar = "GEOID",
+                   varying = c("pov", "fem", "lep", "eth",
+                               "youth", "forn", "older", "disab"),
+                   v.names = "Percent",
+                   timevar = "Category",
+                   times = c("Low-Income", "Female", "LEP", "Ethnic Minority",
+                             "Youth", "Foreign-Born", "Older Adults", "Disabled"),
+                   new.row.names = 1:9653, # Is probably like 8 longer than should be
+                   direction = "long")
+res2$disab <- NA
+dat2010 <- reshape(res2,
+                   idvar = "GEOID",
+                   varying = c("pov", "fem", "lep", "eth",
+                               "youth", "forn", "older", "disab"),
+                   v.names = "Percent",
+                   timevar = "Category",
+                   times = c("Low-Income", "Female", "LEP", "Ethnic Minority",
+                             "Youth", "Foreign-Born", "Older Adults", "Disabled"),
+                   new.row.names = 1:9653,
+                   direction = "long")
+dat2016 <- reshape(res,
+                   idvar = "GEOID",
+                   varying = c("pov", "fem", "lep", "eth",
+                               "youth", "forn", "older", "disab"),
+                   v.names = "Percent",
+                   timevar = "Category",
+                   times = c("Low-Income", "Female", "LEP", "Ethnic Minority",
+                             "Youth", "Foreign-Born", "Older Adults", "Disabled"),
+                   new.row.names = 1:9653,
+                   direction = "long")
+dat2000$Year <- as.factor(2000)
+dat2010$Year <- as.factor(2010)
+dat2016$Year <- as.factor(2016)
+fullDat <- rbind(dat2000, dat2010)
+fullDat <- rbind(fullDat, dat2016)
+
+# How does it look?
+library(ggplot2); library(RColorBrewer)
+setwd("D:/alarson/SuburbanizationPoverty/Backcasting")
+# tiff("differences.tiff", units = "in", width = 8, height = 8, res = 600, compression = "lzw")
+ggplot(fullDat, aes(x = Category, y = Percent, fill = Year)) +
+  geom_boxplot() + theme_minimal() + labs(title = "Changes 2010-2016") + scale_fill_brewer(palette = "Pastel1")
+# dev.off()
