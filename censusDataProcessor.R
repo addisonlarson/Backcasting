@@ -1,6 +1,8 @@
 rm(list=ls())
 library(foreign); library(rgdal)
 library(tidycensus); library(tidyverse)
+library(stringr)
+library(ggplot2); library(RColorBrewer)
 
 # https://api.census.gov/data/2016/acs/acs5/variables.html
 # https://api.census.gov/data/2016/acs/acs5/subject/variables.html
@@ -221,8 +223,8 @@ dem$olderUniverse <- dem$femUniverse
 dem$olderEst <- rowSums(dem[,26:31,49:54])
 dem[c(9:54)] <- NULL
 # Disabled
-dem$disabUniverse <- dem$femUniverse # May need to find noninstitutionalized pop for universe here
-dem$disabEst <- rowSums(dem[,11:30])
+dem$disabUniverse <- rowSums(dem[,11:30])
+dem$disabEst <- rowSums(dem[,seq(11, 30, by = 2)])
 dem[c(11:30)] <- NULL
 # Ethnic Minority
 dem$ethUniverse <- dem$FMC001 + dem$FMC002
@@ -238,22 +240,29 @@ res3 <- as.data.frame(mapply(divisor,
                              dem[seq(9, 21, by = 2)],
                              dem[seq(8, 20, by = 2)]))
 colnames(res3) <- gsub("Est", "", colnames(res3))
-# BEFORE THIS: MUST MAKE GEOID OUT OF ST CTY TRCT FIPS CODES
-res3$GEOID <- dem$GEOID 
-
-# Merge datasets
+# Make GEOID out of st/cty/trct FIPS codes
+dem$st <- as.character(dem$STATEA)
+dem$cty <- str_pad(dem$COUNTYA, 3, pad = "0")
+dem$GEOID <- as.numeric(paste0(dem$st, dem$cty, dem$TRACTA))
+res3$GEOID <- dem$GEOID
 res3$lep <- NA
+res2$disab <- NA
+# Export as is
+setwd("D:/alarson/SuburbanizationPoverty/Backcasting")
+write.csv(res, file = "dat2016.csv", row.names = FALSE)
+write.csv(res2, file = "dat2010.csv", row.names = FALSE)
+write.csv(res3, file = "dat2000.csv", row.names = FALSE)
+# Merge datasets
 dat2000 <- reshape(res3,
                    idvar = "GEOID",
-                   varying = c("pov", "fem", "lep", "eth",
+                   varying = c("pov", "fem", "eth", "lep",
                                "youth", "forn", "older", "disab"),
                    v.names = "Percent",
                    timevar = "Category",
-                   times = c("Low-Income", "Female", "LEP", "Ethnic Minority",
+                   times = c("Low-Income", "Female", "Ethnic Minority", "LEP",
                              "Youth", "Foreign-Born", "Older Adults", "Disabled"),
-                   new.row.names = 1:9653, # Is probably like 8 longer than should be
+                   new.row.names = 1:11024,
                    direction = "long")
-res2$disab <- NA
 dat2010 <- reshape(res2,
                    idvar = "GEOID",
                    varying = c("pov", "fem", "lep", "eth",
@@ -262,7 +271,7 @@ dat2010 <- reshape(res2,
                    timevar = "Category",
                    times = c("Low-Income", "Female", "LEP", "Ethnic Minority",
                              "Youth", "Foreign-Born", "Older Adults", "Disabled"),
-                   new.row.names = 1:9653,
+                   new.row.names = 1:11032,
                    direction = "long")
 dat2016 <- reshape(res,
                    idvar = "GEOID",
@@ -272,7 +281,7 @@ dat2016 <- reshape(res,
                    timevar = "Category",
                    times = c("Low-Income", "Female", "LEP", "Ethnic Minority",
                              "Youth", "Foreign-Born", "Older Adults", "Disabled"),
-                   new.row.names = 1:9653,
+                   new.row.names = 1:11032,
                    direction = "long")
 dat2000$Year <- as.factor(2000)
 dat2010$Year <- as.factor(2010)
@@ -281,9 +290,7 @@ fullDat <- rbind(dat2000, dat2010)
 fullDat <- rbind(fullDat, dat2016)
 
 # How does it look?
-library(ggplot2); library(RColorBrewer)
-setwd("D:/alarson/SuburbanizationPoverty/Backcasting")
 # tiff("differences.tiff", units = "in", width = 8, height = 8, res = 600, compression = "lzw")
 ggplot(fullDat, aes(x = Category, y = Percent, fill = Year)) +
-  geom_boxplot() + theme_minimal() + labs(title = "Changes 2010-2016") + scale_fill_brewer(palette = "Pastel1")
+  geom_boxplot() + theme_minimal() + labs(title = "Changes 2000-2016") + scale_fill_brewer(palette = "Pastel1")
 # dev.off()
